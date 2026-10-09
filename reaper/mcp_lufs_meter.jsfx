@@ -172,6 +172,10 @@ slider2:track_slot=0<0,127,1>Track Slot
   shortterm_sum_r += sq_r;
   momentary_sum_l += sq_l;
   momentary_sum_r += sq_r;
+  momentary_sum_l < 0 ? momentary_sum_l = 0;
+  momentary_sum_r < 0 ? momentary_sum_r = 0;
+  shortterm_sum_l < 0 ? shortterm_sum_l = 0;
+  shortterm_sum_r < 0 ? shortterm_sum_r = 0;
 
   // Advance ring buffer position
   buf_pos += 1;
@@ -224,17 +228,20 @@ slider2:track_slot=0<0,127,1>Track Slot
     integrated_mean = integrated_count > 0 ? (integrated_sum / (integrated_count * 2)) : 0;
 
     // LUFS = -0.691 + 10 * log10(mean_square)
+    // Running sums leave float residue in silence; floor at -70 LUFS like integrated
     shortterm_mean > 0 ? (
       shortterm_lufs = -0.691 + 10 * log10(shortterm_mean);
     ) : (
       shortterm_lufs = -70;
     );
+    shortterm_lufs < -70 ? shortterm_lufs = -70;
 
     momentary_mean > 0 ? (
       momentary_lufs = -0.691 + 10 * log10(momentary_mean);
     ) : (
       momentary_lufs = -70;
     );
+    momentary_lufs < -70 ? momentary_lufs = -70;
 
     integrated_mean > 0 ? (
       // Apply absolute gate at -70 LUFS
