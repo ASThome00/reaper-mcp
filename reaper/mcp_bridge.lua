@@ -182,9 +182,12 @@ local function json_decode_number_array(input)
   if type(input) ~= "string" then return nil end
   local arr = {}
   for tok in input:gsub("^%s*%[", ""):gsub("%]%s*$", ""):gmatch("[^,]+") do
-    local n = tonumber(tok:match("^%s*(.-)%s*$"))
-    if n == nil then return nil end
-    arr[#arr + 1] = n
+    local trimmed = tok:match("^%s*(.-)%s*$")
+    if trimmed ~= "" then
+      local n = tonumber(trimmed)
+      if n == nil then return nil end
+      arr[#arr + 1] = n
+    end
   end
   return arr
 end
@@ -626,6 +629,47 @@ function handlers.create_track(params)
   reaper.Undo_EndBlock("MCP: Create track", -1)
   reaper.TrackList_AdjustWindows(false)
   return { index = idx, name = params.name or "" }
+end
+
+-- Track index lists may arrive as raw "[1, 2]" strings from the fallback JSON parser.
+local function track_index_list(value)
+  if type(value) == "number" then return { value } end
+  local list = json_decode_number_array(value)
+  if not list then return nil end
+  for _, n in ipairs(list) do
+    if n ~= math.floor(n) then return nil end
+  end
+  return list
+end
+
+function handlers.delete_tracks(params)
+  local indices = track_index_list(params.trackIndices)
+  if not indices or #indices == 0 then return nil, "trackIndices required (array of 0-based track indices)" end
+
+  -- Validate everything first so a bad index deletes nothing
+  local count = reaper.CountTracks(0)
+  local unique, seen = {}, {}
+  for _, idx in ipairs(indices) do
+    if idx < 0 or idx >= count then return nil, "Track " .. idx .. " not found (project has " .. count .. " tracks)" end
+    if not seen[idx] then seen[idx] = true; unique[#unique + 1] = idx end
+  end
+  -- Highest index first so earlier deletions don't shift later targets
+  table.sort(unique, function(a, b) return a > b end)
+
+  local deleted = {}
+  reaper.Undo_BeginBlock()
+  reaper.PreventUIRefresh(1)
+  for _, idx in ipairs(unique) do
+    local track = reaper.GetTrack(0, idx)
+    local _, name = reaper.GetTrackName(track)
+    reaper.DeleteTrack(track)
+    table.insert(deleted, 1, { index = idx, name = name })
+  end
+  reaper.PreventUIRefresh(-1)
+  reaper.Undo_EndBlock("MCP: Delete " .. #deleted .. " track(s)", -1)
+  reaper.TrackList_AdjustWindows(false)
+  reaper.UpdateArrange()
+  return { deleted = deleted, trackCount = reaper.CountTracks(0) }
 end
 
 function handlers.rename_track(params)
@@ -3171,6 +3215,29 @@ function handlers.get_selected_tracks(params)
     tracks[#tracks + 1] = { index = idx, name = name }
   end
   return { tracks = tracks, count = count }
+end
+
+function handlers.set_selected_tracks(params)
+  local mode = params.mode or "replace"
+  if mode ~= "replace" and mode ~= "add" and mode ~= "remove" then
+    return nil, "mode must be replace, add or remove"
+  end
+  local indices = track_index_list(params.trackIndices or "[]")
+  if not indices then return nil, "trackIndices must be an array of 0-based track indices" end
+
+  local count = reaper.CountTracks(0)
+  for _, idx in ipairs(indices) do
+    if idx < 0 or idx >= count then return nil, "Track " .. idx .. " not found (project has " .. count .. " tracks)" end
+  end
+
+  if mode == "replace" then
+    for i = 0, count - 1 do reaper.SetTrackSelected(reaper.GetTrack(0, i), false) end
+  end
+  for _, idx in ipairs(indices) do
+    reaper.SetTrackSelected(reaper.GetTrack(0, idx), mode ~= "remove")
+  end
+  reaper.UpdateArrange()
+  return handlers.get_selected_tracks({})
 end
 
 function handlers.get_time_selection(params)

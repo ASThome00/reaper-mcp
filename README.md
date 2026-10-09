@@ -101,7 +101,7 @@ writes to its own region of shared memory (`gmem`).
 | Area | Tools |
 |------|-------|
 | **Project** | `get_project_info`, `set_project_notes`, `save_project`, `run_action`, `get_tempo_map`, `set_tempo` |
-| **Tracks** | `list_tracks`, `create_track`, `rename_track`, `get_track_properties`, `set_track_property`, `set_multiple_track_properties`, `get_track_routing` |
+| **Tracks** | `list_tracks`, `create_track`, `delete_tracks`, `rename_track`, `get_track_properties`, `set_track_property`, `set_multiple_track_properties`, `get_track_routing` |
 | **FX** | `add_fx`, `remove_fx`, `get_fx_parameters`, `analyze_fx`, `set_fx_parameter`, `set_multiple_fx_parameters`, `setup_fx_chain`, `set_fx_enabled`, `set_fx_offline`, `get_fx_named_config`, `set_fx_named_config` |
 | **Plugin discovery** | `list_available_fx`, `search_fx`, `get_fx_preset_list`, `set_fx_preset` |
 | **Transport** | `play`, `stop`, `record`, `get_transport_state`, `set_cursor_position` |
@@ -110,7 +110,7 @@ writes to its own region of shared memory (`gmem`).
 | **Live MIDI** | `send_midi_note`, `send_midi_cc`, `send_midi_pc` |
 | **Media items** | `list_media_items`, `get/set_media_item_properties`, `set_media_items_properties`, `split/delete/move/trim_media_item`, `add/get/delete_stretch_marker` |
 | **Automation** | `get_track_envelopes`, `get_envelope_points`, `insert_envelope_point(s)`, `delete_envelope_point`, `remove_envelope_points`, `create_track_envelope`, `set_envelope_properties`, `clear_envelope` |
-| **Markers & selection** | `list/add/delete_marker`, `list/add/delete_region`, `get_selected_tracks`, `get/set_time_selection` |
+| **Markers & selection** | `list/add/delete_marker`, `list/add/delete_region`, `get/set_selected_tracks`, `get/set_time_selection` |
 | **Snapshots** | `snapshot_save`, `snapshot_restore`, `snapshot_list`, `snapshot_delete` |
 | **Tool discovery** | `list_tool_categories`, `enable_tool_category`, `disable_tool_category` |
 

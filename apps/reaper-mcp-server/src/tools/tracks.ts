@@ -63,6 +63,21 @@ export function registerTrackTools(server: McpServer): void {
   );
 
   server.tool(
+    'delete_tracks',
+    'Delete one or more tracks (with their items and FX) by 0-based index, as a single undo step. All indices are validated first; if any is invalid nothing is deleted. Returns the deleted tracks\' original indices and names. Remaining tracks shift down to fill the gap.',
+    {
+      trackIndices: z.array(z.coerce.number().int().min(0)).min(1).describe('0-based indices of the tracks to delete'),
+    },
+    async ({ trackIndices }) => {
+      const res = await sendCommand('delete_tracks', { trackIndices });
+      if (!res.success) {
+        return { content: [{ type: 'text', text: `Error: ${res.error}` }], isError: true };
+      }
+      return { content: [{ type: 'text', text: JSON.stringify(res.data, null, 2) }] };
+    }
+  );
+
+  server.tool(
     'rename_track',
     'Rename an existing track',
     {

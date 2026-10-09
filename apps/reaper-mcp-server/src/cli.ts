@@ -92,6 +92,7 @@ export const MCP_TOOL_NAMES = [
   // tracks
   'list_tracks',
   'create_track',
+  'delete_tracks',
   'rename_track',
   'get_track_properties',
   'set_track_property',
@@ -160,6 +161,7 @@ export const MCP_TOOL_NAMES = [
   'delete_stretch_marker',
   // selection & navigation
   'get_selected_tracks',
+  'set_selected_tracks',
   'get_time_selection',
   'set_time_selection',
   // markers & regions

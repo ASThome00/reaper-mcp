@@ -121,4 +121,27 @@ describe('track tools', () => {
       });
     });
   });
+
+  describe('delete_tracks', () => {
+    it('sends the indices and returns the deleted tracks', async () => {
+      const data = { deleted: [{ index: 7, name: 'Temp' }], trackCount: 7 };
+      mockedSendCommand.mockResolvedValue({ id: 'test', success: true, data, timestamp: Date.now() });
+
+      const result = await tools['delete_tracks'].handler({ trackIndices: [7] });
+      expect(mockedSendCommand).toHaveBeenCalledWith('delete_tracks', { trackIndices: [7] });
+      expect(result).toEqual({ content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] });
+    });
+
+    it('returns error when the bridge rejects an index', async () => {
+      mockedSendCommand.mockResolvedValue({
+        id: 'test', success: false, error: 'Track 99 not found (project has 8 tracks)', timestamp: Date.now(),
+      });
+
+      const result = await tools['delete_tracks'].handler({ trackIndices: [99] });
+      expect(result).toEqual({
+        content: [{ type: 'text', text: 'Error: Track 99 not found (project has 8 tracks)' }],
+        isError: true,
+      });
+    });
+  });
 });

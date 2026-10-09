@@ -117,4 +117,25 @@ describe('selection tools', () => {
       expectError(result, 'end must be greater than start');
     });
   });
+
+  describe('set_selected_tracks', () => {
+    it('sends indices and mode, returns the resulting selection', async () => {
+      const data = { tracks: [{ index: 2, name: 'Bass' }], count: 1 };
+      mockedSendCommand.mockResolvedValue(successResponse(data));
+
+      const result = await tools['set_selected_tracks'].handler({ trackIndices: [2], mode: 'replace' });
+      expect(mockedSendCommand).toHaveBeenCalledWith('set_selected_tracks', { trackIndices: [2], mode: 'replace' });
+      expect(result).toEqual({ content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] });
+    });
+
+    it('returns error on failure', async () => {
+      mockedSendCommand.mockResolvedValue(errorResponse('Track 9 not found (project has 8 tracks)'));
+
+      const result = await tools['set_selected_tracks'].handler({ trackIndices: [9], mode: 'add' });
+      expect(result).toEqual({
+        content: [{ type: 'text', text: 'Error: Track 9 not found (project has 8 tracks)' }],
+        isError: true,
+      });
+    });
+  });
 });

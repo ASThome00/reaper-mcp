@@ -46,6 +46,7 @@ export type CommandType =
   | 'read_track_crest'
   // Selection & navigation
   | 'get_selected_tracks'
+  | 'set_selected_tracks'
   | 'get_time_selection'
   | 'set_time_selection'
   // Markers & regions
@@ -60,6 +61,7 @@ export type CommandType =
   | 'set_tempo'
   // Project authoring
   | 'create_track'
+  | 'delete_tracks'
   | 'rename_track'
   | 'set_project_notes'
   | 'save_project'

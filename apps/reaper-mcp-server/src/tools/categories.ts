@@ -28,7 +28,7 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
   tracks: {
     name: 'tracks',
     description: 'Track management: list, inspect, and set properties (volume, pan, mute, solo, record arm, phase, input). Includes batch set for multiple tracks at once.',
-    tools: ['list_tracks', 'create_track', 'rename_track', 'get_track_properties', 'set_track_property', 'set_multiple_track_properties'],
+    tools: ['list_tracks', 'create_track', 'delete_tracks', 'rename_track', 'get_track_properties', 'set_track_property', 'set_multiple_track_properties'],
   },
   fx: {
     name: 'fx',
@@ -62,7 +62,7 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
   selection: {
     name: 'selection',
     description: 'Selection and navigation: get selected tracks, get/set time selection range',
-    tools: ['get_selected_tracks', 'get_time_selection', 'set_time_selection'],
+    tools: ['get_selected_tracks', 'set_selected_tracks', 'get_time_selection', 'set_time_selection'],
   },
   markers: {
     name: 'markers',

@@ -17,6 +17,22 @@ export function registerSelectionTools(server: McpServer): void {
   );
 
   server.tool(
+    'set_selected_tracks',
+    'Set which tracks are selected (useful before run_action on selected tracks). mode "replace" (default) selects exactly these tracks, "add" adds them to the selection, "remove" deselects them. An empty list with "replace" clears the selection. Returns the resulting selection.',
+    {
+      trackIndices: z.array(z.coerce.number().int().min(0)).describe('0-based track indices'),
+      mode: z.enum(['replace', 'add', 'remove']).optional().default('replace').describe('How to apply the list to the current selection'),
+    },
+    async ({ trackIndices, mode }) => {
+      const res = await sendCommand('set_selected_tracks', { trackIndices, mode });
+      if (!res.success) {
+        return { content: [{ type: 'text', text: `Error: ${res.error}` }], isError: true };
+      }
+      return { content: [{ type: 'text', text: JSON.stringify(res.data, null, 2) }] };
+    }
+  );
+
+  server.tool(
     'get_time_selection',
     'Get the current time selection (loop selection) start and end in seconds',
     {},
