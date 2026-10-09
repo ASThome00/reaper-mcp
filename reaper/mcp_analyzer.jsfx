@@ -3,23 +3,25 @@ desc:MCP Spectrum Analyzer
 // Writes frequency bin magnitudes (in dB) to shared memory (gmem)
 // so the Lua bridge can read them and pass to the MCP server.
 //
-// gmem layout:
-//   gmem[0] = bin count (fft_size / 2)
-//   gmem[1] = peak dB
-//   gmem[2] = RMS dB
-//   gmem[3 .. 3+bin_count-1] = magnitude in dB per frequency bin
+// gmem layout (per track slot, so instances on different tracks don't collide):
+//   base = track_slot * 4100   (bin_count <= 4096, plus 3 header words)
+//   gmem[base+0] = bin count (fft_size / 2)
+//   gmem[base+1] = peak dB
+//   gmem[base+2] = RMS dB
+//   gmem[base+3 .. base+3+bin_count-1] = magnitude in dB per frequency bin
 
 options:gmem=MCPAnalyzer
 
 slider1:fft_size_slider=4096<512,8192,1>FFT Size
 slider2:window_type=1<0,3,1{Rectangular,Hann,Hamming,Blackman-Harris}>Window Function
 slider3:smoothing=0.8<0,0.99,0.01>Smoothing
+slider4:track_slot=0<0,127,1>Track Slot
 
 @init
   // Allocate memory blocks
   fft_buf = 0;              // FFT input buffer
   window_buf = 16384;       // Window function
-  mag_buf = 32768;          // Magnitude accumulator (smoothed)
+  mag_buf = 32768;          // Smoothed power per bin (linear)
   work_buf = 49152;         // Working buffer for FFT
 
   fft_size = 4096;
@@ -51,10 +53,10 @@ slider3:smoothing=0.8<0,0.99,0.01>Smoothing
 
   compute_window(fft_size, window_type);
 
-  // Initialize smoothed magnitude buffer to -150 dB
+  // Initialize smoothed power buffer (linear) to silence
   i = 0;
   loop(bin_count,
-    mag_buf[i] = -150.0;
+    mag_buf[i] = 0;
     i += 1;
   );
 
@@ -79,7 +81,7 @@ slider3:smoothing=0.8<0,0.99,0.01>Smoothing
     // Reset smoothed magnitudes
     i = 0;
     loop(bin_count,
-      mag_buf[i] = -150.0;
+      mag_buf[i] = 0;
       i += 1;
     );
   );
@@ -106,10 +108,12 @@ slider3:smoothing=0.8<0,0.99,0.01>Smoothing
     // Copy to work buffer for FFT (real FFT needs 2x size)
     memcpy(work_buf, fft_buf, fft_size);
 
-    // Perform real FFT
+    // Perform real FFT; fft_real's output is in scrambled order until permuted
     fft_real(work_buf, fft_size);
+    fft_permute(work_buf, fft_size / 2);
 
     // Calculate magnitudes and write to gmem with smoothing
+    base = track_slot * 4100;
     smooth = smoothing;
     inv_smooth = 1.0 - smooth;
     scale = 2.0 / fft_size;
@@ -129,32 +133,32 @@ slider3:smoothing=0.8<0,0.99,0.01>Smoothing
       );
 
       magnitude = sqrt(re * re + im * im) * scale;
-      magnitude < 0.000001 ? magnitude = 0.000001; // floor at -120 dB
-      mag_db = 20.0 * log10(magnitude);
 
-      // Apply smoothing
-      mag_buf[i] = smooth * mag_buf[i] + inv_smooth * mag_db;
+      // Smooth in linear power, not dB: averaging dB values of a percussive
+      // signal mostly averages the silence between hits.
+      mag_buf[i] = smooth * mag_buf[i] + inv_smooth * magnitude * magnitude;
 
-      // Write to gmem
-      gmem[3 + i] = mag_buf[i];
+      power = mag_buf[i];
+      power < 0.000000000001 ? power = 0.000000000001; // floor at -120 dB
+      gmem[base + 3 + i] = 10.0 * log10(power);
 
       i += 1;
     );
 
     // Write metadata to gmem
-    gmem[0] = bin_count;
+    gmem[base + 0] = bin_count;
 
     // Peak dB
     peak_val < 0.000001 ? peak_val = 0.000001;
-    gmem[1] = 20.0 * log10(peak_val);
+    gmem[base + 1] = 20.0 * log10(peak_val);
 
     // RMS dB
     rms_count > 0 ? (
       rms_val = sqrt(rms_sum / rms_count);
       rms_val < 0.000001 ? rms_val = 0.000001;
-      gmem[2] = 20.0 * log10(rms_val);
+      gmem[base + 2] = 20.0 * log10(rms_val);
     ) : (
-      gmem[2] = -150.0;
+      gmem[base + 2] = -150.0;
     );
 
     // Reset accumulators

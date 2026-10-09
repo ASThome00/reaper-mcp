@@ -23,17 +23,17 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
   project: {
     name: 'project',
     description: 'Project-level information: name, tempo, time signature, sample rate, transport state',
-    tools: ['get_project_info'],
+    tools: ['get_project_info', 'set_project_notes', 'save_project', 'run_action'],
   },
   tracks: {
     name: 'tracks',
     description: 'Track management: list, inspect, and set properties (volume, pan, mute, solo, record arm, phase, input). Includes batch set for multiple tracks at once.',
-    tools: ['list_tracks', 'get_track_properties', 'set_track_property', 'set_multiple_track_properties'],
+    tools: ['list_tracks', 'create_track', 'rename_track', 'get_track_properties', 'set_track_property', 'set_multiple_track_properties'],
   },
   fx: {
     name: 'fx',
-    description: 'FX chain management: add, remove, inspect, and set parameters. Includes batch setup of an entire FX chain and batch parameter updates across multiple plugins.',
-    tools: ['add_fx', 'remove_fx', 'get_fx_parameters', 'analyze_fx', 'set_fx_parameter', 'set_fx_enabled', 'set_fx_offline', 'setup_fx_chain', 'set_multiple_fx_parameters'],
+    description: 'FX chain management: add, remove, inspect, and set parameters. Includes batch setup of an entire FX chain, batch parameter updates across multiple plugins, and named config (e.g. loading a sample into ReaSamplOmatic5000).',
+    tools: ['add_fx', 'remove_fx', 'get_fx_parameters', 'analyze_fx', 'set_fx_parameter', 'set_fx_enabled', 'set_fx_offline', 'setup_fx_chain', 'set_multiple_fx_parameters', 'get_fx_named_config', 'set_fx_named_config'],
   },
   transport: {
     name: 'transport',
@@ -72,7 +72,7 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
   tempo: {
     name: 'tempo',
     description: 'Tempo map: get all tempo and time signature changes with positions, BPM, and linear/step flags',
-    tools: ['get_tempo_map'],
+    tools: ['get_tempo_map', 'set_tempo'],
   },
   envelopes: {
     name: 'envelopes',
@@ -85,8 +85,8 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
   },
   analysis: {
     name: 'analysis',
-    description: 'Audio metering and analysis: peak/RMS meters, FFT spectrum, LUFS loudness, stereo correlation, crest factor',
-    tools: ['read_track_meters', 'read_track_spectrum', 'read_track_lufs', 'read_track_correlation', 'read_track_crest'],
+    description: 'Audio metering and analysis: peak/RMS meters, FFT spectrum, LUFS loudness, stereo correlation, crest factor, instrument note-map probing',
+    tools: ['read_track_meters', 'read_track_spectrum', 'read_track_lufs', 'read_track_correlation', 'read_track_crest', 'probe_instrument_notes'],
   },
   discovery: {
     name: 'discovery',

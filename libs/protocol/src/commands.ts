@@ -22,6 +22,8 @@ export type CommandType =
   | 'analyze_fx'
   | 'set_fx_parameter'
   | 'set_fx_enabled'
+  | 'get_fx_named_config'
+  | 'set_fx_named_config'
   | 'set_fx_offline'
   | 'read_track_meters'
   | 'read_track_spectrum'
@@ -55,6 +57,13 @@ export type CommandType =
   | 'delete_region'
   // Tempo
   | 'get_tempo_map'
+  | 'set_tempo'
+  // Project authoring
+  | 'create_track'
+  | 'rename_track'
+  | 'set_project_notes'
+  | 'save_project'
+  | 'run_action'
   // Envelopes
   | 'get_track_envelopes'
   | 'get_envelope_points'
@@ -101,7 +110,9 @@ export type CommandType =
   | 'send_midi_pc'
   | 'send_midi_note'
   // Semantic audio analysis (requires Python sidecar)
-  | 'render_track_to_wav';
+  | 'render_track_to_wav'
+  // Instrument discovery (offline render)
+  | 'probe_instrument_notes';
 
 // --- Per-command param types ---
 
@@ -222,6 +233,7 @@ export interface GetTrackRoutingParams {
 
 export interface ReadTrackLufsParams {
   trackIndex: number;
+  reset?: boolean;  // clear accumulated measurement before reading
 }
 
 export interface ReadTrackCorrelationParams {
@@ -541,6 +553,15 @@ export interface SendMidiNoteParams {
 }
 
 // --- Semantic audio analysis param types ---
+
+export interface ProbeInstrumentNotesParams {
+  trackIndex: number;
+  lowPitch?: number;     // default 24
+  highPitch?: number;    // default 84
+  velocity?: number;     // default 110
+  slotSeconds?: number;  // time between probe notes, default 0.75
+  noteSeconds?: number;  // probe note length, default 0.25
+}
 
 export interface RenderTrackToWavParams {
   trackIndex: number;

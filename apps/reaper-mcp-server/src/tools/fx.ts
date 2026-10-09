@@ -125,4 +125,39 @@ export function registerFxTools(server: McpServer): void {
       return { content: [{ type: 'text', text: `FX ${fxIndex} on track ${trackIndex} set ${offline ? 'offline' : 'online'}` }] };
     }
   );
+
+  server.tool(
+    'get_fx_named_config',
+    'Read a named config value from an FX plugin (TrackFX_GetNamedConfigParm) — settings that are not automatable parameters, e.g. ReaSamplOmatic5000 "FILE0" (loaded sample path), or "fx_name", "renamed_name".',
+    {
+      trackIndex: z.coerce.number().int().min(0).describe('Zero-based track index'),
+      fxIndex: z.coerce.number().int().min(0).describe('Zero-based FX index in the chain'),
+      key: z.string().min(1).describe('Named config key, e.g. "FILE0"'),
+    },
+    async ({ trackIndex, fxIndex, key }) => {
+      const res = await sendCommand('get_fx_named_config', { trackIndex, fxIndex, key });
+      if (!res.success) {
+        return { content: [{ type: 'text', text: `Error: ${res.error}` }], isError: true };
+      }
+      return { content: [{ type: 'text', text: JSON.stringify(res.data, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'set_fx_named_config',
+    'Set a named config value on an FX plugin (TrackFX_SetNamedConfigParm). Use to load a sample into ReaSamplOmatic5000: key "FILE0", value = absolute path to a WAV/AIFF (the sample is applied automatically). Returns the value read back.',
+    {
+      trackIndex: z.coerce.number().int().min(0).describe('Zero-based track index'),
+      fxIndex: z.coerce.number().int().min(0).describe('Zero-based FX index in the chain'),
+      key: z.string().min(1).describe('Named config key, e.g. "FILE0"'),
+      value: z.string().describe('Value to set, e.g. an absolute sample file path'),
+    },
+    async ({ trackIndex, fxIndex, key, value }) => {
+      const res = await sendCommand('set_fx_named_config', { trackIndex, fxIndex, key, value });
+      if (!res.success) {
+        return { content: [{ type: 'text', text: `Error: ${res.error}` }], isError: true };
+      }
+      return { content: [{ type: 'text', text: JSON.stringify(res.data, null, 2) }] };
+    }
+  );
 }

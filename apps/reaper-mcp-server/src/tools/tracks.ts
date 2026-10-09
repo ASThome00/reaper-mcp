@@ -45,4 +45,36 @@ export function registerTrackTools(server: McpServer): void {
       return { content: [{ type: 'text', text: `Set track ${trackIndex} ${property} = ${value}` }] };
     }
   );
+
+  server.tool(
+    'create_track',
+    'Insert a new track at an index (default: end of track list) with an optional name',
+    {
+      index: z.coerce.number().int().min(0).optional().describe('Insert position (0-based); omit to append'),
+      name: z.string().optional().describe('Track name'),
+    },
+    async ({ index, name }) => {
+      const res = await sendCommand('create_track', { index, name });
+      if (!res.success) {
+        return { content: [{ type: 'text', text: `Error: ${res.error}` }], isError: true };
+      }
+      return { content: [{ type: 'text', text: JSON.stringify(res.data, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'rename_track',
+    'Rename an existing track',
+    {
+      trackIndex: z.coerce.number().int().min(0).describe('Track index (0-based)'),
+      name: z.string().describe('New track name'),
+    },
+    async ({ trackIndex, name }) => {
+      const res = await sendCommand('rename_track', { trackIndex, name });
+      if (!res.success) {
+        return { content: [{ type: 'text', text: `Error: ${res.error}` }], isError: true };
+      }
+      return { content: [{ type: 'text', text: JSON.stringify(res.data, null, 2) }] };
+    }
+  );
 }

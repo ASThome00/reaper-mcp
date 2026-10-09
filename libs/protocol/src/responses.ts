@@ -440,6 +440,30 @@ export interface RenderTrackToWavResult {
   channelCount: number;
 }
 
+export interface ProbeInstrumentNotesRenderResult extends RenderTrackToWavResult {
+  lowPitch: number;
+  highPitch: number;
+  slotSeconds: number;
+  noteSeconds: number;
+}
+
+export interface ProbedNote {
+  pitch: number;
+  noteName: string;     // e.g. "C2" (60 = C4)
+  peakDb: number;       // peak in the attack window after the note-on
+  riseDb: number;       // peakDb minus the level just before the note-on
+  zeroCrossHz: number;  // zero-crossing rate in the attack window: ~pitch for tonal sounds, high for noise (hats/snares)
+  decayMs: number;      // time from attack peak to -20 dB
+}
+
+export interface ProbeInstrumentNotesResult {
+  trackIndex: number;
+  trackName: string;
+  thresholdDb: number;
+  responding: ProbedNote[];
+  silentPitches: number[];
+}
+
 export interface AestheticsResult {
   trackIndex: number;
   trackName: string;

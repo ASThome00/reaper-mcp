@@ -86,8 +86,13 @@ export const REAPER_ASSETS = [
 export const MCP_TOOL_NAMES = [
   // project
   'get_project_info',
+  'set_project_notes',
+  'save_project',
+  'run_action',
   // tracks
   'list_tracks',
+  'create_track',
+  'rename_track',
   'get_track_properties',
   'set_track_property',
   // fx
@@ -165,8 +170,11 @@ export const MCP_TOOL_NAMES = [
   'delete_region',
   // tempo map
   'get_tempo_map',
+  'set_tempo',
   // fx enable/offline
   'set_fx_enabled',
+  'get_fx_named_config',
+  'set_fx_named_config',
   'set_fx_offline',
   // envelopes
   'get_track_envelopes',
@@ -188,6 +196,8 @@ export const MCP_TOOL_NAMES = [
   'disable_tool_category',
   // semantic audio analysis (requires Python sidecar — opt-in)
   'analyze_track_aesthetics',
+  // instrument note-map discovery (offline render)
+  'probe_instrument_notes',
   // Note: 'render_track_to_wav' is an internal Lua bridge command, NOT a public MCP tool.
   // It must NOT be listed here — MCP_TOOL_NAMES drives the Claude Code allowlist.
 ] as const;

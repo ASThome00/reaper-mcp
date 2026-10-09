@@ -5,14 +5,16 @@ desc:MCP Crest Factor Meter
 // Writes results to shared memory (gmem) so the Lua bridge can read them.
 //
 // gmem layout:
-//   gmem[0] = crest factor (dB) = peak level - RMS level
-//   gmem[1] = peak level (dB)
-//   gmem[2] = RMS level (dB)
+//   gmem[base+0] = crest factor (dB) = peak level - RMS level
+//   gmem[base+1] = peak level (dB)
+//   gmem[base+2] = RMS level (dB)
 
+// base = track_slot * 4, so instances on different tracks don't collide.
 options:gmem=MCPCrestFactor
 
 slider1:window_ms=1000<100,5000,100>Window (ms)
 slider2:peak_hold_ms=1000<100,10000,100>Peak Hold (ms)
+slider3:track_slot=0<0,127,1>Track Slot
 
 @init
   // Ring buffer for squared samples (RMS window)
@@ -32,6 +34,7 @@ slider2:peak_hold_ms=1000<100,10000,100>Peak Hold (ms)
   needs_init = 1;
 
 @sample
+  base = track_slot * 4;  // per-track gmem slot
   needs_init ? (
     buf_size = ceil(srate * window_ms / 1000);
     buf_size > 262144 ? buf_size = 262144;
@@ -43,9 +46,9 @@ slider2:peak_hold_ms=1000<100,10000,100>Peak Hold (ms)
     peak_hold_samples = ceil(srate * peak_hold_ms / 1000);
     peak_hold_pos = 0;
     needs_init = 0;
-    gmem[0] = 0;
-    gmem[1] = -150;
-    gmem[2] = -150;
+    gmem[base+0] = 0;
+    gmem[base+1] = -150;
+    gmem[base+2] = -150;
   );
 
   // Mono mix for metering
@@ -97,9 +100,9 @@ slider2:peak_hold_ms=1000<100,10000,100>Peak Hold (ms)
       crest_db = 0;
     );
 
-    gmem[0] = crest_db;
-    gmem[1] = peak_db;
-    gmem[2] = rms_db;
+    gmem[base+0] = crest_db;
+    gmem[base+1] = peak_db;
+    gmem[base+2] = rms_db;
   );
 
   // Pass audio through unmodified

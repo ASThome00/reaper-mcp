@@ -3,6 +3,13 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { sendCommand } from '../bridge.js';
 import type { TrackMeasurement } from '@reaper-mcp/protocol';
 
+const METRIC_COMMANDS = {
+  lufs: 'read_track_lufs',
+  crest: 'read_track_crest',
+  correlation: 'read_track_correlation',
+  spectrum: 'read_track_spectrum',
+} as const;
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -10,12 +17,13 @@ function sleep(ms: number): Promise<void> {
 export function registerAnalysisTools(server: McpServer): void {
   server.tool(
     'read_track_lufs',
-    'Read ITU-R BS.1770 loudness data for a track. Auto-inserts the MCP LUFS Meter JSFX if not present. Returns integrated, short-term (3s), and momentary (400ms) LUFS plus true inter-sample peak levels. Audio must be playing to accumulate data.',
+    'Read ITU-R BS.1770 loudness data for a track. Auto-inserts the MCP LUFS Meter JSFX if not present. Returns integrated, short-term (3s), and momentary (400ms) LUFS plus true inter-sample peak levels. Audio must be playing to accumulate data. Pass reset=true to clear accumulated (integrated) data before a new measurement.',
     {
       trackIndex: z.coerce.number().int().min(0).describe('Zero-based track index'),
+      reset: z.boolean().optional().describe('Clear accumulated measurement first'),
     },
-    async ({ trackIndex }) => {
-      const res = await sendCommand('read_track_lufs', { trackIndex });
+    async ({ trackIndex, reset }) => {
+      const res = await sendCommand('read_track_lufs', { trackIndex, reset });
       if (!res.success) {
         return { content: [{ type: 'text', text: `Error: ${res.error}` }], isError: true };
       }
@@ -55,7 +63,7 @@ export function registerAnalysisTools(server: McpServer): void {
 
   server.tool(
     'measure_tracks',
-    'Play audio and collect analysis measurements (LUFS, crest factor, correlation, spectrum) for one or more tracks in a single call. Handles playback start/stop automatically. LUFS supports multi-track; crest/correlation/spectrum use global gmem and are only reliable for single-track measurement. First call may be slower due to JSFX meter auto-insertion.',
+    'Play audio and collect analysis measurements (LUFS, crest factor, correlation, spectrum) for one or more tracks in a single call. Handles playback start/stop automatically. Meters are inserted and LUFS is reset before playback starts, so readings cover only the measured window. Metrics that fail are reported under `errors`.',
     {
       trackIndices: z.array(z.coerce.number().int().min(0)).min(1).max(8)
         .describe('Track indices to measure (max 8)'),
@@ -75,6 +83,21 @@ export function registerAnalysisTools(server: McpServer): void {
         // Check current transport state
         const transportRes = await sendCommand('get_transport_state', {});
         const isPlaying = transportRes.success && (transportRes.data as { playing?: boolean })?.playing;
+
+        // Arm meters before playback: the read commands auto-insert their JSFX,
+        // and LUFS is reset so integrated loudness covers only this window.
+        // Results are discarded (the meters have no data yet).
+        await Promise.all(
+          trackIndices.flatMap((trackIndex) =>
+            metrics.map((metric) =>
+              sendCommand(METRIC_COMMANDS[metric], {
+                trackIndex,
+                ...(metric === 'lufs' ? { reset: true } : {}),
+                ...(metric === 'spectrum' ? { fftSize } : {}),
+              }),
+            ),
+          ),
+        );
 
         // Seek and start playback if needed
         if (startPosition != null) {
@@ -96,31 +119,12 @@ export function registerAnalysisTools(server: McpServer): void {
 
         for (const trackIndex of trackIndices) {
           for (const metric of metrics) {
-            let commandType: string;
             const params: Record<string, unknown> = { trackIndex };
-
-            switch (metric) {
-              case 'lufs':
-                commandType = 'read_track_lufs';
-                break;
-              case 'crest':
-                commandType = 'read_track_crest';
-                break;
-              case 'correlation':
-                commandType = 'read_track_correlation';
-                break;
-              case 'spectrum':
-                commandType = 'read_track_spectrum';
-                params.fftSize = fftSize;
-                break;
-              default:
-                continue;
-            }
-
+            if (metric === 'spectrum') params.fftSize = fftSize;
             measurementPromises.push({
               trackIndex,
               metric,
-              promise: sendCommand(commandType as Parameters<typeof sendCommand>[0], params),
+              promise: sendCommand(METRIC_COMMANDS[metric], params),
             });
           }
         }
@@ -150,8 +154,12 @@ export function registerAnalysisTools(server: McpServer): void {
           trackMap.set(trackIndex, { trackIndex });
         }
 
+        const errors: Array<{ trackIndex: number; metric: string; error: string }> = [];
         for (const { trackIndex, metric, result } of results) {
-          if (!result.success) continue;
+          if (!result.success) {
+            errors.push({ trackIndex, metric, error: result.error ?? 'unknown error' });
+            continue;
+          }
           const measurement = trackMap.get(trackIndex)!;
           switch (metric) {
             case 'lufs':
@@ -174,6 +182,7 @@ export function registerAnalysisTools(server: McpServer): void {
           durationSeconds,
           startPosition: startPosition ?? 0,
           endPosition,
+          ...(errors.length > 0 ? { errors } : {}),
         };
 
         return { content: [{ type: 'text', text: JSON.stringify(output, null, 2) }] };

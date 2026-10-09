@@ -457,7 +457,7 @@ function handlers.get_project_info(params)
   local proj_path = reaper.GetProjectPath()
   local track_count = reaper.CountTracks(0)
   local tempo = reaper.Master_GetTempo()
-  local _, ts_num, ts_den = reaper.TimeMap_GetTimeSigAtTime(0, 0)
+  local ts_num, ts_den = reaper.TimeMap_GetTimeSigAtTime(0, 0)
   local sr = reaper.GetSetProjectInfo(0, "PROJECT_SRATE", 0, false)
   local play_state = reaper.GetPlayState() -- 0=stopped, 1=playing, 2=paused, 4=recording
   local cursor_pos = reaper.GetCursorPosition()
@@ -597,6 +597,56 @@ function handlers.set_track_property(params)
   return { success = true, trackIndex = idx, property = prop, value = value }
 end
 
+function handlers.create_track(params)
+  local count = reaper.CountTracks(0)
+  local idx = params.index
+  if idx == nil or idx < 0 or idx > count then idx = count end
+  reaper.Undo_BeginBlock()
+  reaper.InsertTrackAtIndex(idx, true)
+  local track = reaper.GetTrack(0, idx)
+  if params.name then
+    reaper.GetSetMediaTrackInfo_String(track, "P_NAME", params.name, true)
+  end
+  reaper.Undo_EndBlock("MCP: Create track", -1)
+  reaper.TrackList_AdjustWindows(false)
+  return { index = idx, name = params.name or "" }
+end
+
+function handlers.rename_track(params)
+  local track = reaper.GetTrack(0, params.trackIndex)
+  if not track then return nil, "Track " .. tostring(params.trackIndex) .. " not found" end
+  if not params.name then return nil, "name required" end
+  reaper.GetSetMediaTrackInfo_String(track, "P_NAME", params.name, true)
+  return { trackIndex = params.trackIndex, name = params.name }
+end
+
+function handlers.set_project_notes(params)
+  if not params.notes then return nil, "notes required" end
+  reaper.GetSetProjectNotes(0, true, params.notes)
+  reaper.MarkProjectDirty(0)
+  return { length = #params.notes }
+end
+
+function handlers.save_project(params)
+  if params.path and params.path ~= "" then
+    reaper.Main_SaveProjectEx(0, params.path, 0)
+  else
+    reaper.Main_SaveProject(0, false)
+  end
+  local _, proj_path = reaper.EnumProjects(-1)
+  return { path = proj_path or "" }
+end
+
+function handlers.run_action(params)
+  local id = params.commandId
+  if type(id) == "string" then
+    id = tonumber(id) or reaper.NamedCommandLookup(id)
+  end
+  if not id or id == 0 then return nil, "Unknown action: " .. tostring(params.commandId) end
+  reaper.Main_OnCommand(id, 0)
+  return { commandId = id }
+end
+
 function handlers.add_fx(params)
   local idx = params.trackIndex
   local fx_name = params.fxName
@@ -607,10 +657,13 @@ function handlers.add_fx(params)
   local track = reaper.GetTrack(0, idx)
   if not track then return nil, "Track " .. idx .. " not found" end
 
-  local position = params.position or -1
+  -- TrackFX_AddByName's instantiate arg: -1 = append, -1000-n = insert at slot n
+  -- (0 would mean "query existing only", so map chain slots explicitly).
+  local position = params.position
+  local instantiate = (position == nil or position < 0) and -1 or (-1000 - position)
 
   reaper.Undo_BeginBlock()
-  local fx_idx = reaper.TrackFX_AddByName(track, fx_name, false, position)
+  local fx_idx = reaper.TrackFX_AddByName(track, fx_name, false, instantiate)
   if fx_idx < 0 then
     reaper.Undo_EndBlock("MCP: Add FX (failed)", -1)
     return nil, "FX not found: " .. fx_name
@@ -878,6 +931,24 @@ end
 -- earlier handlers.read_track_spectrum can capture it as an upvalue.
 local ensure_jsfx_on_track
 
+-- MCP meter JSFX write to a per-track region of their shared gmem, selected by
+-- a 0-127 "Track Slot" slider. JSFX sliders take raw (not normalized) values.
+local MAX_METER_SLOT = 127
+local function set_meter_slot(track, fx_idx, param_idx, track_idx)
+  -- Never write parameters to something that isn't an MCP meter (e.g. the container).
+  local _, name = reaper.TrackFX_GetFXName(track, fx_idx)
+  if not (name and name:find("MCP ", 1, true)) then
+    return nil, "Expected an MCP meter at FX " .. tostring(fx_idx) .. ", found " .. tostring(name)
+  end
+  if track_idx > MAX_METER_SLOT then
+    return nil, "MCP meters support track indices 0-" .. MAX_METER_SLOT
+  end
+  if reaper.TrackFX_GetParam(track, fx_idx, param_idx) ~= track_idx then
+    reaper.TrackFX_SetParam(track, fx_idx, param_idx, track_idx)
+  end
+  return true
+end
+
 function handlers.read_track_spectrum(params)
   local idx = params.trackIndex
   if not idx then return nil, "trackIndex required" end
@@ -891,23 +962,33 @@ function handlers.read_track_spectrum(params)
     return nil, err or "MCP Spectrum Analyzer JSFX not found. Run 'reaper-mcp setup' to install it."
   end
 
-  -- Read spectrum data from gmem
-  -- JSFX writes: gmem[0] = bin_count, gmem[1] = peak_db, gmem[2] = rms_db, gmem[3..] = bins
-  reaper.gmem_attach("MCPAnalyzer")
+  local ok, slot_err = set_meter_slot(track, analyzer_idx, 3, idx)
+  if not ok then return nil, slot_err end
+  -- Slider 1 is the FFT size; the JSFX snaps it to 512..8192
+  local requested_fft = params.fftSize or 4096
+  if reaper.TrackFX_GetParam(track, analyzer_idx, 0) ~= requested_fft then
+    reaper.TrackFX_SetParam(track, analyzer_idx, 0, requested_fft)
+  end
 
-  local bin_count = reaper.gmem_read(0)
+  -- Read spectrum data from this track's gmem slot
+  -- JSFX writes: [base] = bin_count, [base+1] = peak_db, [base+2] = rms_db, [base+3..] = bins
+  reaper.gmem_attach("MCPAnalyzer")
+  local base = idx * 4100
+
+  local bin_count = reaper.gmem_read(base)
   if bin_count <= 0 then
     return nil, "Spectrum analyzer not producing data yet. Ensure audio is playing."
   end
 
-  local peak_db = reaper.gmem_read(1)
-  local rms_db = reaper.gmem_read(2)
+  local peak_db = reaper.gmem_read(base + 1)
+  local rms_db = reaper.gmem_read(base + 2)
   local sr = reaper.GetSetProjectInfo(0, "PROJECT_SRATE", 0, false)
-  local fft_size = params.fftSize or 4096
+  -- Report the size the analyzer actually ran at (a size change takes one FFT frame)
+  local fft_size = bin_count * 2
 
   local bins = {}
   for i = 0, bin_count - 1 do
-    bins[#bins + 1] = reaper.gmem_read(3 + i)
+    bins[#bins + 1] = reaper.gmem_read(base + 3 + i)
   end
 
   return {
@@ -976,39 +1057,43 @@ end
 -- =============================================================================
 
 -- Helper: detect FX type prefix from name
+-- Returns the plugin format ("VST3", "VST", "AU", "CLAP", "LV2", "JS") and
+-- whether it is an instrument (instrument prefixes end in "i", e.g. "VST3i:").
 local function fx_type_from_name(name)
-  if name:match("^VST3:") then return "VST3"
-  elseif name:match("^VST:") then return "VST"
-  elseif name:match("^JS:") then return "JS"
-  elseif name:match("^AU:") then return "AU"
-  elseif name:match("^CLAP:") then return "CLAP"
-  else return "JS" end  -- default for bare JSFX names
+  local prefix = name:match("^(%w+):")
+  if prefix then
+    local base, inst = prefix:match("^(%u+%d?)(i?)$")
+    if base then return base, inst == "i" end
+  end
+  return "JS", false  -- default for bare JSFX names
 end
 
--- Enumerate all installed FX using SWS CF_EnumerateInstalledFX if available,
--- otherwise fall back to scanning open projects via TrackFX_AddByName probe.
--- The SWS approach is preferred and more complete.
+-- Enumerate all installed FX using REAPER's native EnumInstalledFX (REAPER 7+),
+-- or CF_EnumerateInstalledFX if an extension provides it,
+-- otherwise fall back to parsing reaper-fxfolders.ini.
 function handlers.list_available_fx(params)
   local category_filter = params.category
   local fx_list = {}
 
-  -- Try SWS CF_EnumerateInstalledFX (requires SWS extension)
-  if reaper.CF_EnumerateInstalledFX then
+  local enum_fx = reaper.EnumInstalledFX or reaper.CF_EnumerateInstalledFX
+  if enum_fx then
     local i = 0
     while true do
-      local ok, name, ident = reaper.CF_EnumerateInstalledFX(i)
+      local ok, name, ident = enum_fx(i)
       if not ok then break end
-      local fx_type = fx_type_from_name(name)
+      local fx_type, is_instrument = fx_type_from_name(name)
       if not category_filter or fx_type:lower() == category_filter:lower() then
         fx_list[#fx_list + 1] = {
           name = name,
           type = fx_type,
+          isInstrument = is_instrument,
           path = ident or "",
         }
       end
       i = i + 1
     end
-    return { fxList = fx_list, total = #fx_list, source = "sws" }
+    return { fxList = fx_list, total = #fx_list,
+             source = reaper.EnumInstalledFX and "native" or "sws" }
   end
 
   -- Fallback: parse reaper-fxfolders.ini for plugin names
@@ -1029,7 +1114,7 @@ function handlers.list_available_fx(params)
   end
 
   return { fxList = fx_list, total = 0, source = "none",
-           warning = "SWS not installed and reaper-fxfolders.ini not found. Install SWS Extensions for full FX enumeration." }
+           warning = "EnumInstalledFX unavailable (needs REAPER 7+) and reaper-fxfolders.ini not found." }
 end
 
 function handlers.search_fx(params)
@@ -1619,6 +1704,37 @@ end
 -- Tries to place inside an "MCP Meters" FX Container (REAPER 7.06+).
 -- Falls back to direct insertion on older REAPER versions.
 -- Returns the FX index (possibly container-addressed) on success, or nil + error.
+-- TrackFX_GetFXName returns the JSFX `desc:` line (e.g. "JS: MCP LUFS Meter"),
+-- not the file path we add it by, so map paths to their desc names.
+local MCP_JSFX_DESC = {
+  ["reaper-mcp/mcp_analyzer"]          = "MCP Spectrum Analyzer",
+  ["reaper-mcp/mcp_lufs_meter"]        = "MCP LUFS Meter",
+  ["reaper-mcp/mcp_correlation_meter"] = "MCP Correlation Meter",
+  ["reaper-mcp/mcp_crest_factor"]      = "MCP Crest Factor Meter",
+  ["reaper-mcp/mcp_midi_emitter"]      = "MCP MIDI Emitter",
+}
+
+local function jsfx_name_matches(name, fx_name)
+  if not name then return false end
+  local desc = MCP_JSFX_DESC[fx_name]
+  return (desc ~= nil and name:find(desc, 1, true) ~= nil) or name:find(fx_name, 1, true) ~= nil
+end
+
+-- Addresses (container_item.N) of every instance of a JSFX inside a container, in order.
+local function find_container_jsfx(track, container_idx, fx_name)
+  local _, count_str = reaper.TrackFX_GetNamedConfigParm(track, container_idx, "container_count")
+  local found = {}
+  for i = 0, (tonumber(count_str) or 0) - 1 do
+    local _, addr_str = reaper.TrackFX_GetNamedConfigParm(track, container_idx, "container_item." .. i)
+    local addr = tonumber(addr_str)
+    if addr then
+      local _, name = reaper.TrackFX_GetFXName(track, addr)
+      if jsfx_name_matches(name, fx_name) then found[#found + 1] = addr end
+    end
+  end
+  return found
+end
+
 function ensure_jsfx_on_track(track, fx_name)
   -- Try container approach first (REAPER 7.06+)
   local container_idx = find_or_create_mcp_container(track)
@@ -1626,16 +1742,15 @@ function ensure_jsfx_on_track(track, fx_name)
     local ok, count_str = reaper.TrackFX_GetNamedConfigParm(track, container_idx, "container_count")
     local count = tonumber(count_str) or 0
 
-    -- Search inside container for existing JSFX
-    for i = 0, count - 1 do
-      local _, addr_str = reaper.TrackFX_GetNamedConfigParm(track, container_idx, "container_item." .. i)
-      local addr = tonumber(addr_str)
-      if addr then
-        local _, name = reaper.TrackFX_GetFXName(track, addr)
-        if name and name:find(fx_name, 1, true) then
-          return addr  -- Found inside container
-        end
+    -- Search inside container for existing JSFX. Keep the first instance and
+    -- delete any duplicates (older bridges re-inserted a meter on every read).
+    local matches = find_container_jsfx(track, container_idx, fx_name)
+    if #matches > 0 then
+      for m = #matches, 2, -1 do
+        reaper.TrackFX_Delete(track, matches[m])
       end
+      if #matches > 1 then container_cache[tostring(track)] = nil end
+      return find_container_jsfx(track, container_idx, fx_name)[1]
     end
 
     -- Not found — insert inside container
@@ -1648,7 +1763,11 @@ function ensure_jsfx_on_track(track, fx_name)
     if new_idx >= 0 then
       -- Invalidate cache since FX count changed
       container_cache[tostring(track)] = nil
-      return new_idx
+      -- AddByName's return value is not the container-item address (it can
+      -- point at the container itself, so parameter writes hit its Bypass).
+      -- Look the new instance up by name instead.
+      local added = find_container_jsfx(track, container_idx, fx_name)
+      if added[1] then return added[1] end
     end
     -- Container insertion failed — fall through to direct
   end
@@ -1657,7 +1776,7 @@ function ensure_jsfx_on_track(track, fx_name)
   local fx_count = reaper.TrackFX_GetCount(track)
   for i = 0, fx_count - 1 do
     local _, name = reaper.TrackFX_GetFXName(track, i)
-    if name and name:find(fx_name, 1, true) then
+    if jsfx_name_matches(name, fx_name) then
       return i
     end
   end
@@ -1678,11 +1797,13 @@ function handlers.read_track_lufs(params)
   local fx_idx, err = ensure_jsfx_on_track(track, MCP_LUFS_METER_FX_NAME)
   if not fx_idx then return nil, err end
 
-  -- Set the track_slot parameter so this instance writes to a unique gmem offset
-  local desired_slot = idx / 127
-  local current_slot = reaper.TrackFX_GetParam(track, fx_idx, 1)
-  if math.abs(current_slot - desired_slot) > 0.001 then
-    reaper.TrackFX_SetParam(track, fx_idx, 1, desired_slot)
+  -- Slider 2 = track slot, so this instance writes to a unique gmem offset
+  local ok, slot_err = set_meter_slot(track, fx_idx, 1, idx)
+  if not ok then return nil, slot_err end
+
+  -- Slider 1 = reset: clears integrated/short-term/true-peak accumulation
+  if params.reset then
+    reaper.TrackFX_SetParam(track, fx_idx, 0, 1)
   end
 
   -- Read from gmem (JSFX writes here from @sample)
@@ -1718,13 +1839,17 @@ function handlers.read_track_correlation(params)
   local fx_idx, err = ensure_jsfx_on_track(track, MCP_CORRELATION_METER_FX_NAME)
   if not fx_idx then return nil, err end
 
-  -- Read from gmem (JSFX writes here from @sample)
-  reaper.gmem_attach("MCPCorrelationMeter")
+  local ok, slot_err = set_meter_slot(track, fx_idx, 1, idx)
+  if not ok then return nil, slot_err end
 
-  local correlation  = reaper.gmem_read(0)
-  local stereo_width = reaper.gmem_read(1)
-  local mid_level    = reaper.gmem_read(2)
-  local side_level   = reaper.gmem_read(3)
+  -- Read from this track's gmem slot (JSFX writes here from @sample)
+  reaper.gmem_attach("MCPCorrelationMeter")
+  local base = idx * 4
+
+  local correlation  = reaper.gmem_read(base + 0)
+  local stereo_width = reaper.gmem_read(base + 1)
+  local mid_level    = reaper.gmem_read(base + 2)
+  local side_level   = reaper.gmem_read(base + 3)
 
   return {
     trackIndex   = idx,
@@ -1745,12 +1870,16 @@ function handlers.read_track_crest(params)
   local fx_idx, err = ensure_jsfx_on_track(track, MCP_CREST_FACTOR_FX_NAME)
   if not fx_idx then return nil, err end
 
-  -- Read from gmem (JSFX writes here from @sample)
-  reaper.gmem_attach("MCPCrestFactor")
+  local ok, slot_err = set_meter_slot(track, fx_idx, 2, idx)
+  if not ok then return nil, slot_err end
 
-  local crest_factor = reaper.gmem_read(0)
-  local peak_level   = reaper.gmem_read(1)
-  local rms_level    = reaper.gmem_read(2)
+  -- Read from this track's gmem slot (JSFX writes here from @sample)
+  reaper.gmem_attach("MCPCrestFactor")
+  local base = idx * 4
+
+  local crest_factor = reaper.gmem_read(base + 0)
+  local peak_level   = reaper.gmem_read(base + 1)
+  local rms_level    = reaper.gmem_read(base + 2)
 
   return {
     trackIndex   = idx,
@@ -2769,6 +2898,35 @@ end
 -- FX Enable / Offline
 -- =============================================================================
 
+-- Named config parameters (TrackFX_Get/SetNamedConfigParm): plugin settings that
+-- aren't automatable parameters, e.g. ReaSamplOmatic5000's "FILE0" sample path.
+function handlers.get_fx_named_config(params)
+  local track = reaper.GetTrack(0, params.trackIndex or -1)
+  if not track then return nil, "Track " .. tostring(params.trackIndex) .. " not found" end
+  if params.fxIndex == nil or not params.key then return nil, "fxIndex and key required" end
+  local ok, value = reaper.TrackFX_GetNamedConfigParm(track, params.fxIndex, params.key)
+  if not ok then return nil, "FX " .. params.fxIndex .. " has no named config '" .. params.key .. "'" end
+  return { trackIndex = params.trackIndex, fxIndex = params.fxIndex, key = params.key, value = value }
+end
+
+function handlers.set_fx_named_config(params)
+  local track = reaper.GetTrack(0, params.trackIndex or -1)
+  if not track then return nil, "Track " .. tostring(params.trackIndex) .. " not found" end
+  if params.fxIndex == nil or not params.key or params.value == nil then
+    return nil, "fxIndex, key and value required"
+  end
+  reaper.Undo_BeginBlock()
+  local ok = reaper.TrackFX_SetNamedConfigParm(track, params.fxIndex, params.key, tostring(params.value))
+  -- ReaSamplOmatic5000 applies FILEn changes when it receives "DONE"
+  if ok and params.key:match("^FILE%d+$") then
+    reaper.TrackFX_SetNamedConfigParm(track, params.fxIndex, "DONE", "")
+  end
+  reaper.Undo_EndBlock("MCP: Set FX named config '" .. params.key .. "'", -1)
+  if not ok then return nil, "FX " .. params.fxIndex .. " rejected named config '" .. params.key .. "'" end
+  local _, readback = reaper.TrackFX_GetNamedConfigParm(track, params.fxIndex, params.key)
+  return { trackIndex = params.trackIndex, fxIndex = params.fxIndex, key = params.key, value = readback }
+end
+
 function handlers.set_fx_enabled(params)
   local track = reaper.GetTrack(0, params.trackIndex)
   if not track then return nil, "Track " .. params.trackIndex .. " not found" end
@@ -2942,12 +3100,7 @@ function handlers.set_multiple_fx_parameters(params)
   local updates_input = params.updates
   if not updates_input then return nil, "updates array required" end
 
-  local updates = nil
-  if type(updates_input) == "string" then
-    updates = json_decode(updates_input)
-  elseif type(updates_input) == "table" then
-    updates = updates_input
-  end
+  local updates = json_decode_array(updates_input)
   if not updates then return nil, "Failed to parse updates array" end
 
   local updated = 0
@@ -3120,6 +3273,21 @@ end
 -- Tempo Map
 -- =============================================================================
 
+function handlers.set_tempo(params)
+  local bpm = params.bpm
+  if not bpm or bpm <= 0 then return nil, "bpm required" end
+  local num = params.numerator or 4
+  local denom = params.denominator or 4
+  -- Edit the first tempo marker if one exists, otherwise create one at time 0
+  local marker_idx = reaper.CountTempoTimeSigMarkers(0) > 0 and 0 or -1
+  reaper.Undo_BeginBlock()
+  reaper.SetTempoTimeSigMarker(0, marker_idx, 0, -1, -1, bpm, num, denom, false)
+  reaper.Undo_EndBlock("MCP: Set tempo/time signature", -1)
+  reaper.UpdateTimeline()
+  local ts_num, ts_den, tempo = reaper.TimeMap_GetTimeSigAtTime(0, 0)
+  return { bpm = tempo, timeSignatureNumerator = ts_num, timeSignatureDenominator = ts_den }
+end
+
 function handlers.get_tempo_map(params)
   local count = reaper.CountTempoTimeSigMarkers(0)
   local markers = {}
@@ -3137,7 +3305,7 @@ function handlers.get_tempo_map(params)
   -- If no markers, return the project tempo as the single entry
   if count == 0 then
     local bpm = reaper.Master_GetTempo()
-    local _, num, denom = reaper.TimeMap_GetTimeSigAtTime(0, 0)
+    local num, denom = reaper.TimeMap_GetTimeSigAtTime(0, 0)
     markers[1] = {
       index = 0,
       position = 0,
@@ -3521,6 +3689,22 @@ end
 -- IMPORTANT: slot bytes (2+slot*3) must be written BEFORE advancing write_head
 -- (gmem[0]). The JSFX reads write_head first; advancing it early exposes an
 -- incompletely-written slot to the audio thread.
+-- Find or insert the MIDI emitter at the top of the track's FX chain.
+-- It must sit BEFORE the instrument so emitted notes reach it; placing it in
+-- the "MCP Meters" container (end of chain) meant instruments never saw them.
+local function ensure_midi_emitter(track)
+  for i = 0, reaper.TrackFX_GetCount(track) - 1 do
+    local _, name = reaper.TrackFX_GetFXName(track, i)
+    if name and name:find("MCP MIDI Emitter", 1, true) then
+      if i ~= 0 then reaper.TrackFX_CopyToTrack(track, i, track, 0, true) end
+      return 0
+    end
+  end
+  local idx = reaper.TrackFX_AddByName(track, MCP_MIDI_EMITTER_FX_NAME, false, -1000)
+  if idx < 0 then return nil, "Failed to insert " .. MCP_MIDI_EMITTER_FX_NAME end
+  return idx
+end
+
 local function write_midi_to_ring(status, d1, d2)
   local slot = math.floor(reaper.gmem_read(0)) % 16
   reaper.gmem_write(2 + slot*3 + 0, status)
@@ -3539,7 +3723,7 @@ function handlers.send_midi_cc(params)
   if not track then return nil, "Track " .. idx .. " not found" end
 
   local channel = math.max(0, math.min(15, math.floor(params.channel or 0)))
-  local ok, err = ensure_jsfx_on_track(track, MCP_MIDI_EMITTER_FX_NAME)
+  local ok, err = ensure_midi_emitter(track)
   if not ok then return nil, err end
 
   reaper.gmem_attach("MCPMidiEmitter")
@@ -3560,7 +3744,7 @@ function handlers.send_midi_pc(params)
   if not track then return nil, "Track " .. idx .. " not found" end
 
   local channel = math.max(0, math.min(15, math.floor(params.channel or 0)))
-  local ok, err = ensure_jsfx_on_track(track, MCP_MIDI_EMITTER_FX_NAME)
+  local ok, err = ensure_midi_emitter(track)
   if not ok then return nil, err end
 
   reaper.gmem_attach("MCPMidiEmitter")
@@ -3591,7 +3775,7 @@ function handlers.send_midi_note(params)
   if not track then return nil, "Track " .. idx .. " not found" end
 
   local channel = math.max(0, math.min(15, math.floor(params.channel or 0)))
-  local ok, err = ensure_jsfx_on_track(track, MCP_MIDI_EMITTER_FX_NAME)
+  local ok, err = ensure_midi_emitter(track)
   if not ok then return nil, err end
 
   local pitch    = math.floor(params.pitch)
@@ -3799,6 +3983,70 @@ function handlers.render_track_to_wav(params)
     sampleRate     = sample_rate,
     channelCount   = 2,
   }
+end
+
+-- =============================================================================
+-- probe_instrument_notes handler
+--
+-- Discovers which MIDI pitches an instrument responds to. Writes a temporary
+-- MIDI item past the project end with one note per time slot, renders the track
+-- offline via render_track_to_wav, then deletes the item. The server reads the
+-- WAV and measures each slot. Works without playback and without UI access.
+--
+-- Params: trackIndex, lowPitch, highPitch, velocity, slotSeconds, noteSeconds
+-- =============================================================================
+function handlers.probe_instrument_notes(params)
+  local track_index = params.trackIndex
+  if track_index == nil then return nil, "trackIndex required" end
+  local track = reaper.GetTrack(0, track_index)
+  if not track then return nil, "Track " .. track_index .. " not found" end
+
+  local low   = math.floor(params.lowPitch or 24)
+  local high  = math.floor(params.highPitch or 84)
+  local vel   = math.floor(params.velocity or 110)
+  local slot  = params.slotSeconds or 0.75
+  local nlen  = params.noteSeconds or 0.25
+  if high < low then return nil, "highPitch must be >= lowPitch" end
+
+  local count = high - low + 1
+  local start = reaper.GetProjectLength(0) + 5
+  local finish = start + count * slot + 1
+
+  reaper.PreventUIRefresh(1)
+  reaper.Undo_BeginBlock()
+  local item = reaper.CreateNewMIDIItemInProj(track, start, finish, false)
+  if not item then
+    reaper.Undo_EndBlock("MCP: Probe instrument notes (failed)", -1)
+    reaper.PreventUIRefresh(-1)
+    return nil, "Failed to create probe MIDI item"
+  end
+  local take = reaper.GetActiveTake(item)
+  for i = 0, count - 1 do
+    local t0 = start + i * slot
+    local p0 = reaper.MIDI_GetPPQPosFromProjTime(take, t0)
+    local p1 = reaper.MIDI_GetPPQPosFromProjTime(take, t0 + nlen)
+    reaper.MIDI_InsertNote(take, false, false, p0, p1, 0, low + i, vel, true)
+  end
+  reaper.MIDI_Sort(take)
+
+  local result, err = handlers.render_track_to_wav({
+    trackIndex = track_index,
+    startTime  = start,
+    endTime    = finish,
+    commandId  = "probe" .. tostring(math.floor(reaper.time_precise() * 1000)),
+  })
+
+  reaper.DeleteTrackMediaItem(track, item)
+  reaper.Undo_EndBlock("MCP: Probe instrument notes", -1)
+  reaper.PreventUIRefresh(-1)
+  reaper.UpdateArrange()
+
+  if not result then return nil, err end
+  result.lowPitch    = low
+  result.highPitch   = high
+  result.slotSeconds = slot
+  result.noteSeconds = nlen
+  return result
 end
 
 -- =============================================================================
