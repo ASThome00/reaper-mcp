@@ -34,7 +34,7 @@ slider2:track_slot=0<0,127,1>Track Slot
   // momentary: 400ms window, short-term: 3s window
   buf_size = 0;
   buf_l = 65536;          // start address for left channel ring buffer
-  buf_r = 131072;         // start address for right channel ring buffer
+  buf_r = 327680;         // right ring buffer: past buf_l + max buf_size (262144), no overlap
   buf_pos = 0;
 
   // Running sums for windows
@@ -79,7 +79,7 @@ slider2:track_slot=0<0,127,1>Track Slot
   );
 
   function reset_measurement() (
-    base = floor(slider2 + 0.5) * 8;
+    base = floor(track_slot + 0.5) * 8;
     buf_pos = 0;
     momentary_sum_l = 0;
     momentary_sum_r = 0;
@@ -110,10 +110,10 @@ slider2:track_slot=0<0,127,1>Track Slot
   needs_init = 1;
 
   // Handle reset button
-  slider1 == 1 ? (
+  reset_btn >= 0.5 ? (
     reset_measurement();
-    slider1 = 0;
-    sliderchange(slider1);
+    reset_btn = 0;
+    sliderchange(reset_btn);
   );
 
 @sample
@@ -211,7 +211,7 @@ slider2:track_slot=0<0,127,1>Track Slot
 
   // --- Update gmem every 4096 samples (approx 10x/second at 44.1kHz) ---
   (sample_count % 4096) == 0 ? (
-    base = floor(slider2 + 0.5) * 8;
+    base = floor(track_slot + 0.5) * 8;
 
     mom_samples = floor(srate * 0.4);
     mom_samples < 1 ? mom_samples = 1;

@@ -65,7 +65,7 @@ slider4:track_slot=0<0,127,1>Track Slot
   rms_count = 0;
 
 @slider
-  new_fft_size = slider1;
+  new_fft_size = fft_size_slider;
   // Snap to valid FFT sizes
   new_fft_size <= 512 ? new_fft_size = 512 :
   new_fft_size <= 1024 ? new_fft_size = 1024 :
