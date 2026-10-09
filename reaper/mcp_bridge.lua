@@ -117,7 +117,9 @@ local function parse_flat_object(str)
       end
     elseif ch:match('[%d%-]') then
       -- Number
-      local num_str = str:match('-?%d+%.?%d*', val_start)
+      -- Keep any exponent: snapshot volumes like 3.16e-08 (-150 dB) must not become 3.16
+      local num_str = str:match('^-?%d+%.?%d*[eE][-+]?%d+', val_start)
+        or str:match('^-?%d+%.?%d*', val_start)
       if num_str then
         obj[key] = tonumber(num_str)
         i = val_start + #num_str
@@ -171,6 +173,20 @@ local function json_decode_array(input)
   end
   if #arr > 0 then return arr end
   return nil
+end
+
+-- Decode a flat JSON number array ("[0.5, -12, 1e-3]"). The fallback object
+-- parser leaves nested arrays as raw strings, so snapshot FX params need this.
+local function json_decode_number_array(input)
+  if type(input) == "table" then return input end
+  if type(input) ~= "string" then return nil end
+  local arr = {}
+  for tok in input:gsub("^%s*%[", ""):gsub("%]%s*$", ""):gmatch("[^,]+") do
+    local n = tonumber(tok:match("^%s*(.-)%s*$"))
+    if n == nil then return nil end
+    arr[#arr + 1] = n
+  end
+  return arr
 end
 
 local function json_encode(obj)
@@ -896,7 +912,7 @@ function handlers.set_fx_parameter(params)
   if not track then return nil, "Track " .. idx .. " not found" end
 
   reaper.Undo_BeginBlock()
-  local ok = reaper.TrackFX_SetParam(track, fx_idx, param_idx, value)
+  local ok = reaper.TrackFX_SetParamNormalized(track, fx_idx, param_idx, value)
   if not ok then
     reaper.Undo_EndBlock("MCP: Set FX parameter (failed)", -1)
     return nil, "Failed to set param " .. param_idx .. " on FX " .. fx_idx
@@ -1030,7 +1046,7 @@ function handlers.get_transport_state(params)
   local cursor_pos = reaper.GetCursorPosition()
   local play_pos = reaper.GetPlayPosition()
   local tempo = reaper.Master_GetTempo()
-  local _, ts_num, ts_den = reaper.TimeMap_GetTimeSigAtTime(0, 0)
+  local ts_num, ts_den = reaper.TimeMap_GetTimeSigAtTime(0, 0)
 
   return {
     playing = (play_state & 1) ~= 0,
@@ -1422,7 +1438,10 @@ function handlers.snapshot_restore(params)
               end
 
               -- Restore FX parameters only if plugin name matches
-              if fx_state.params and #fx_state.params > 0 then
+              if type(fx_state.params) == "string" then
+                fx_state.params = json_decode_number_array(fx_state.params)
+              end
+              if type(fx_state.params) == "table" and #fx_state.params > 0 then
                 local _, current_name = reaper.TrackFX_GetFXName(track, fx_idx)
                 if current_name == fx_state.name then
                   for p, val in ipairs(fx_state.params) do
@@ -3059,7 +3078,7 @@ function handlers.setup_fx_chain(params)
         if plugin.parameters and type(plugin.parameters) == "table" then
           for _, p in ipairs(plugin.parameters) do
             if p.index ~= nil and p.value ~= nil then
-              local ok = reaper.TrackFX_SetParam(track, fx_idx, p.index, p.value)
+              local ok = reaper.TrackFX_SetParamNormalized(track, fx_idx, p.index, p.value)
               if not ok then
                 param_errors[#param_errors + 1] = "Failed to set param " .. p.index
               end
@@ -3121,7 +3140,7 @@ function handlers.set_multiple_fx_parameters(params)
       if not track then
         errors[#errors + 1] = "Track " .. track_idx .. " not found"
       else
-        local ok = reaper.TrackFX_SetParam(track, fx_idx, param_idx, value)
+        local ok = reaper.TrackFX_SetParamNormalized(track, fx_idx, param_idx, value)
         if not ok then
           errors[#errors + 1] = "Failed to set track " .. track_idx .. " fx " .. fx_idx .. " param " .. param_idx
         else
