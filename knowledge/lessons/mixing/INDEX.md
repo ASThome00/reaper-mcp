@@ -17,3 +17,7 @@ lesson schema, entrenchment guards, and the promotion/self-heal flow are in
 ## Lessons
 
 <!-- - [short title](entries/2026-06-28-slug.md) — one-line takeaway [seen:1] -->
+- [add_fx position 0 = query-only; meters before instrument](entries/2026-10-05-add-fx-position-zero.md) — omit `position`, instrument first, check analysis-container order [seen:1]
+- [Insert FX are pre-fader](entries/2026-10-05-fx-prefader-thresholds.md) — subtract the fader offset when setting comp thresholds from meter readings [seen:1]
+- [Bridge polling during playback lags REAPER](entries/2026-10-05-metering-poll-rate-lags-reaper.md) — ≤1 cmd/s, FFT once per section, bus headroom first [seen:1]
+- [Sanity-check analyzer readings](entries/2026-10-05-sanity-check-analyzer-readings.md) — spectrum can be implausible/frozen; bus analyzers are pre-fader; average transient meters [seen:1]

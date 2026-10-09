@@ -101,3 +101,10 @@ No notable factory presets. Build from the recommended settings above.
 - When CPU budget is tight — ReaEQ is extremely lightweight
 
 Prefer FabFilter Pro-Q 3 (preference: 90) when available for its per-band dynamic EQ, better visualization, and mid/side processing.
+
+## Learned notes
+- [2026-10-05] Param map (VST, default 5-band instance): 0/1/2 = Low Shelf freq/gain/BW, 3/4/5 = Band 2,
+  6/7/8 = Band 3, 9/10/11 = High Shelf 4, 12/13/14 = **High Pass 5** (enabled by default at 100 Hz — always
+  set or it silently cuts lows), 15 = Global Gain. Freq/gain normalization is non-linear (100 Hz≈0.141,
+  1 kHz≈0.476, 5 kHz≈0.739; 0 dB gain = 0.25) — bisect on formattedValue rather than computing.
+  (context: synth-pop session, MCP bridge, REAPER 7.82)
